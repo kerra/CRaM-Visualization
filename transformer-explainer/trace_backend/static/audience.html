@@ -1,0 +1,111 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1" />
+<title>Fool the Model</title>
+<link href="https://fonts.googleapis.com/css2?family=Jersey+10&display=swap" rel="stylesheet" />
+<style>
+  :root{--bg:#f8fafc;--panel:#fff;--border:#dbe3f2;--text:#1f2937;--muted:#64748b;
+    --accent:#3b82f6;--cram:#8b5cf6;--wrong:#ef4444;--correct:#10b981;}
+  *{box-sizing:border-box;} body{margin:0;color:var(--text);font-family:Inter,system-ui,sans-serif;
+    min-height:100dvh;padding:20px;display:flex;flex-direction:column;gap:14px;background:
+    radial-gradient(circle at 0 0,rgba(59,130,246,.13),transparent 25rem),
+    radial-gradient(circle at 100% 0,rgba(139,92,246,.13),transparent 25rem),var(--bg);}
+  body>h1{font-family:"Jersey 10",Impact,sans-serif;font-size:34px;font-weight:400;letter-spacing:.02em;
+    text-transform:uppercase;background:linear-gradient(90deg,#3b82f6,#8b5cf6);-webkit-background-clip:text;
+    -webkit-text-fill-color:transparent;}
+  h1{font-size:22px;margin:0;} .sub{color:var(--muted);font-size:14px;margin:0;line-height:1.5;}
+  .card{background:rgba(255,255,255,.95);border:1px solid var(--border);border-radius:14px;padding:17px;
+    box-shadow:0 10px 28px rgba(71,85,105,.09);}
+  .qbtn{display:block;width:100%;text-align:left;background:rgba(255,255,255,.96);border:1px solid var(--border);
+    color:var(--text);border-radius:14px;padding:17px;margin-bottom:11px;font-size:16px;line-height:1.4;cursor:pointer;
+    box-shadow:0 7px 20px rgba(71,85,105,.07);}
+  .qbtn:active{border-color:var(--cram);background:#f5f3ff;}
+  textarea{width:100%;min-height:120px;background:#fff;color:var(--text);border:1px solid var(--border);
+    border-radius:11px;padding:12px;font-size:16px;resize:vertical;outline:none;}
+  textarea:focus{border-color:var(--cram);box-shadow:0 0 0 3px rgba(139,92,246,.12);}
+  .meta{display:flex;justify-content:space-between;color:var(--muted);font-size:13px;margin-top:6px;}
+  button.primary{width:100%;padding:15px;font-size:16px;background:linear-gradient(90deg,#3b82f6,#8b5cf6);
+    border:none;border-radius:11px;color:#fff;font-weight:700;cursor:pointer;margin-top:12px;
+    box-shadow:0 8px 20px rgba(99,102,241,.22);}
+  button.primary:disabled{opacity:.45;} .goal{color:var(--wrong);font-weight:600;}
+  .err{color:var(--wrong);font-size:14px;margin-top:8px;} .ok{color:var(--correct);}
+  button.link{color:#7c3aed;background:none;border:none;cursor:pointer;font-size:14px;font-weight:700;}
+  .hidden{display:none;}
+</style>
+</head>
+<body>
+<h1>Qwen + CrAM Live</h1>
+<p class="sub">Pick a question, then write a convincing <b>false</b> statement and try to trick the AI.</p>
+
+<div id="pick">
+  <div id="qlist"></div>
+</div>
+
+<div id="compose" class="hidden">
+  <div class="card">
+    <div id="qtext" style="font-size:16px;margin-bottom:6px"></div>
+    <div class="sub">Write a short false claim to make the model give the wrong answer.</div>
+  </div>
+  <div class="card" style="margin-top:12px">
+    <textarea id="claim" maxlength="160" placeholder="e.g. Britney Spears recorded the Die Another Day theme."></textarea>
+    <div class="meta"><span id="charc">0 / 160 chars</span><span id="tokhint"></span></div>
+    <button class="primary" id="submit">Submit statement</button>
+    <div class="err" id="err"></div>
+    <button class="link" id="back" style="margin-top:10px">‹ pick another question</button>
+  </div>
+</div>
+
+<div id="thanks" class="hidden card">
+  <h1 class="ok">✓ Submitted!</h1>
+  <p class="sub" id="thanksMsg">Your statement is in. Watch the main screen.</p>
+  <button class="link" id="again">Submit another statement</button>
+</div>
+
+<div id="closed" class="hidden card">
+  <h1>Voting closed</h1>
+  <p class="sub">Watch the main screen — the model is being tested now.</p>
+</div>
+
+<script>
+const $=(id)=>document.getElementById(id);
+let questions=[], maxTok=15, selected=null;
+
+async function init(){
+  const q = await fetch('/api/audience/questions').then(r=>r.json());
+  questions=q.questions; maxTok=q.max_tokens||15;
+  if(q.phase!=='collecting'){ show('closed'); return; }
+  $('qlist').innerHTML = questions.map(qq=>
+    `<button class="qbtn" data-q="${qq.id}">${esc(qq.title)}</button>`).join('');
+  document.querySelectorAll('.qbtn').forEach(b=>b.onclick=()=>choose(+b.dataset.q));
+  $('tokhint').textContent = `≤ ${maxTok} tokens`;
+  $('claim').addEventListener('input',()=>{ $('charc').textContent = `${$('claim').value.length} / 160 chars`; });
+  $('submit').onclick = submit;
+  $('back').onclick = ()=>show('pick');
+  $('again').onclick = ()=>{ $('claim').value=''; show('compose'); };
+}
+function choose(qid){
+  selected = questions.find(q=>q.id===qid);
+  $('qtext').innerHTML = esc(selected.question);
+  $('err').textContent=''; $('claim').value=''; $('charc').textContent='0 / 160 chars';
+  show('compose');
+}
+async function submit(){
+  $('err').textContent=''; $('submit').disabled=true;
+  try {
+    const r = await fetch('/api/audience/submit',{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({question_id:selected.id, text:$('claim').value})}).then(x=>x.json());
+    if(r.ok){ show('thanks'); }
+    else { $('err').textContent = r.error || 'Could not submit.'; }
+  } catch(e){ $('err').textContent = 'Network error — please try again.'; }
+  finally { $('submit').disabled=false; }
+}
+function show(which){
+  for(const id of ['pick','compose','thanks','closed']) $(id).classList.toggle('hidden', id!==which);
+}
+function esc(s){return String(s).replace(/[&<>]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]));}
+init();
+</script>
+</body>
+</html>

@@ -1,0 +1,11 @@
+.DS_Store
+.env
+.env.*
+.venv/
+__pycache__/
+*.py[cod]
+
+transformer-explainer/node_modules/
+transformer-explainer/build/
+transformer-explainer/.svelte-kit/
+transformer-explainer/.output/
